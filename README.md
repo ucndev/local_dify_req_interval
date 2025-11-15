@@ -36,7 +36,9 @@ pip install requests python-dotenv
 ```env
 DIFY_ENDPOINT=https://your-dify-api-endpoint/v1/workflows/run
 DIFY_API_KEY=your-api-key-here
-CHANNEL_ID=your-slack-channel-id
+# CHANNEL_ID=C057948P7QS        #AI
+CHANNEL_ID=CSS85JF0D          #議事録
+# CHANNEL_ID=GP54YPZD3          #藤鶴桑山大佐海ds
 ```
 
 #### オプションの環境変数
@@ -48,6 +50,9 @@ DIFY_USER_ID=slack-history-import
 # Slack履歴の取得範囲（UNIXタイムスタンプ、文字列として指定）
 OLDEST_TS=1704034800
 LATEST_TS=1762354800
+
+# レスポンスの oldest_dt による終了判定（日付形式: YYYY-M-D または YYYY-MM-DD）
+OLDEST_DATE=2024-1-1
 
 # 1回のリクエストで取得するメッセージ数（デフォルト: 5）
 LIMIT=5
@@ -73,6 +78,7 @@ STATE_FILE=./cursor.state.json
 | `DIFY_USER_ID` | - | `slack-history-import` | Dify APIリクエストのユーザーID |
 | `OLDEST_TS` | - | なし | 遡る下限のタイムスタンプ（文字列）。ここまで遡ったら停止 |
 | `LATEST_TS` | - | なし | 取得開始位置のタイムスタンプ（文字列）。未指定なら最新から開始 |
+| `OLDEST_DATE` | - | なし | レスポンスの `oldest_dt` による終了判定。指定日付以前になったら停止（例: `2024-1-1`） |
 | `LIMIT` | - | `5` | 1回のリクエストで取得するメッセージ数 |
 | `REQUEST_INTERVAL_MIN` | - | `1` | リクエスト間隔（分） |
 | `MAX_RETRIES` | - | `3` | Dify内部エラー時の最大リトライ回数 |
@@ -83,6 +89,12 @@ STATE_FILE=./cursor.state.json
 - `LATEST_TS` 未指定の場合、最新のメッセージから取得開始
 - `OLDEST_TS` を指定すると、その時刻まで遡ったら停止
 - 例: `OLDEST_TS=1704034800`（2024-01-01）なら、最新から2024年1月1日まで遡る
+
+**`OLDEST_DATE` について**:
+- Slack API の `oldest` パラメータ（`OLDEST_TS`）がうまく機能しない場合の代替手段
+- レスポンスの `oldest_dt`（例: "2024-04-02 02:00:39"）が指定した日付以前になったら自動的に停止
+- 日付形式: `YYYY-M-D` または `YYYY-MM-DD`（例: `2024-1-1` または `2024-01-01`）
+- 未設定の場合は `next_cursor` が空になるまで継続
 
 ## 使い方
 
@@ -120,7 +132,10 @@ python3 dify_slack_history_loop.py --help
 3. 前回の続きから、または最初（最新のメッセージ）からDify APIを呼び出し
 4. 1回のリクエストで指定件数のメッセージを取得（`LIMIT` 環境変数、デフォルト5件）
 5. 結果を確認：`oldest_dt` で各バッチの最も古いメッセージの日時を表示
-6. `OLDEST_TS` に到達したか、`next_cursor` が空になったら終了
+6. 以下のいずれかの条件で終了：
+   - `OLDEST_DATE` を設定している場合：`oldest_dt` が指定日付以前になった
+   - `OLDEST_TS` に到達した（Slack API側の制御）
+   - `next_cursor` が空になった（全履歴を取得完了）
 7. それ以外は指定した間隔（デフォルト1分）待機して次のバッチへ
 8. **過去に向かって遡りながら**繰り返し
 

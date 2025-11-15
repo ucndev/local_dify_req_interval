@@ -6,6 +6,7 @@ import sys
 import argparse
 from pathlib import Path
 from typing import Optional
+from datetime import datetime
 
 import requests
 from dotenv import load_dotenv
@@ -19,6 +20,7 @@ def load_env():
         "channel_id": os.getenv("CHANNEL_ID"),
         "oldest_ts": os.getenv("OLDEST_TS", "").strip(),
         "latest_ts": os.getenv("LATEST_TS", "").strip(),
+        "oldest_date": os.getenv("OLDEST_DATE", "").strip(),
         "interval_min": float(os.getenv("REQUEST_INTERVAL_MIN", "1")),
         "limit": int(os.getenv("LIMIT", "5")),
         "max_retries": int(os.getenv("MAX_RETRIES", "3")),
@@ -34,6 +36,8 @@ def load_env():
         cfg["oldest_ts"] = None
     if not cfg["latest_ts"]:
         cfg["latest_ts"] = None
+    if not cfg["oldest_date"]:
+        cfg["oldest_date"] = None
     return cfg
 
 def load_state(path: str) -> dict:
@@ -60,6 +64,36 @@ def build_inputs(cfg, cursor: Optional[str]):
     if cfg["latest_ts"] is not None:
         inputs["latest_ts"] = cfg["latest_ts"]
     return inputs
+
+def is_older_than_threshold(oldest_dt_str: Optional[str], threshold_date_str: Optional[str]) -> bool:
+    """
+    oldest_dt が threshold_date より古い（または等しい）場合に True を返す。
+    oldest_dt_str: "2024-04-02 02:00:39" 形式
+    threshold_date_str: "2024-1-1" 形式
+    どちらかが None の場合は False を返す（チェックしない）
+    """
+    if not oldest_dt_str or not threshold_date_str:
+        return False
+
+    try:
+        # oldest_dt をパース（"2024-04-02 02:00:39" 形式）
+        oldest_dt = datetime.strptime(oldest_dt_str, "%Y-%m-%d %H:%M:%S")
+        # threshold_date をパース（"2024-1-1" や "2024-01-01" 形式に対応）
+        threshold_dt = datetime.strptime(threshold_date_str, "%Y-%m-%d")
+    except ValueError:
+        # パースエラーの場合は、別の形式を試す
+        try:
+            # "2024-1-1" のような形式に対応
+            parts = threshold_date_str.split("-")
+            if len(parts) == 3:
+                threshold_dt = datetime(int(parts[0]), int(parts[1]), int(parts[2]))
+            else:
+                return False
+        except (ValueError, IndexError):
+            return False
+
+    # oldest_dt が threshold_dt より古い（または等しい）場合に True
+    return oldest_dt <= threshold_dt
 
 def call_dify(cfg, inputs):
     headers = {
@@ -104,7 +138,7 @@ def main():
         print("[INFO] Test mode: Running once without loop.")
     else:
         print("[INFO] Start loop. Press Ctrl+C to stop.")
-    print(f"[INFO] channel={cfg['channel_id']} oldest_ts={cfg['oldest_ts']} latest_ts={cfg['latest_ts']} interval_min={cfg['interval_min']}")
+    print(f"[INFO] channel={cfg['channel_id']} oldest_ts={cfg['oldest_ts']} latest_ts={cfg['latest_ts']} oldest_date={cfg['oldest_date']} interval_min={cfg['interval_min']}")
 
     try:
         while True:
@@ -174,6 +208,13 @@ def main():
 
             # カーソル更新
             state["cursor"] = next_cursor
+
+            # oldest_date による終了判定
+            if is_older_than_threshold(oldest_dt, cfg["oldest_date"]):
+                print(f"[INFO] oldest_dt ({oldest_dt}) reached or passed OLDEST_DATE ({cfg['oldest_date']}). Finished.")
+                state["finished"] = True
+                save_state(cfg["state_file"], state)
+                break
 
             # 打ち止め判定：next_cursor が空(None/"")なら終了
             if not next_cursor:
